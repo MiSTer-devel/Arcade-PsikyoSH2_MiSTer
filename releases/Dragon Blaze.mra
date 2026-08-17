@@ -1,6 +1,7 @@
 <misterromdescription>
 	<rbf>PsikyoSH2</rbf>
 	<setname>dragnblz</setname>
+	<mameversion>0165</mameversion>
 	<description>Dragon Blaze</description>
 	<rotation>Vertical (CCW)</rotation>
 	<year>2000</year>
@@ -63,7 +64,7 @@
 		<part repeat="0x800000">00</part>
 		<interleave output="64">
 			<part crc="fc5eade8" name="2prog_h.u21" map="216500" />
-			<part crc="95d6fd02" name="1prog_l.u2216" map="2165" />
+			<part crc="95d6fd02" name="1prog_l.u22" map="2165" />
 		</interleave>
 		<part repeat="0x300000">00</part>
 		<interleave output="64">
