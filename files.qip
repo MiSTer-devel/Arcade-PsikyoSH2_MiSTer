@@ -8,6 +8,7 @@ set_global_assignment -name VHDL_FILE rtl/mlab.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram1.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/screen_rotate_two.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/arcade_switches_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mame_keys.sv
 set_global_assignment -name SDC_FILE PsikyoSH2.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE PsikyoSH2.sv
-
