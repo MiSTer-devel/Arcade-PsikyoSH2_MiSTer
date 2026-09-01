@@ -19,6 +19,8 @@ module emu
 	`include "sys/emu_ports.vh"
 );
 
+	import ARCADE_SWITCHES_PKG::*;
+
 	assign ADC_BUS  = 'Z;
 	assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 	assign BUTTONS   = {1'b0,osd_btn};
@@ -226,7 +228,7 @@ module emu
 	wire rst_sys = reset | download | loader_rst;
 	
 	//[1:0] - ver: 0-PS3,1-PS5,2-PS4
-	//[5:4] - input mode: 1,2,3,4 buttons
+	//[5:4] - input mode: 1,2,3,4 push switches
 	//[6] - input mode: mahjong panel
 	reg  [7:0] BOARD_CONF = 8'h00;
 	always @(posedge clk_sys) begin
@@ -237,6 +239,14 @@ module emu
 	wire ps3_board = (BOARD_CONF[1:0] == 2'h0);
 	wire ps5_board = (BOARD_CONF[1:0] == 2'h1);
 	wire ps4_board = (BOARD_CONF[1:0] == 2'h2);
+	localparam [2:0] INPUT_1_PUSH_SWITCH = 3'h0;
+	localparam [2:0] INPUT_2_PUSH_SWITCH = 3'h1;
+	localparam [2:0] INPUT_3_PUSH_SWITCH = 3'h2;
+	localparam [2:0] INPUT_4_PUSH_SWITCH = 3'h3;
+	localparam [2:0] INPUT_MAHJONG       = 3'h4;
+	localparam PCB_PLAYERS       = 4;
+	localparam PCB_PUSH_SWITCHES = 4;
+	localparam PCB_PLAYER_SW_WIDTH = P_SW_PUSH_BASE + PCB_PUSH_SWITCHES;
 	
 	reg [7:0] dip_sw = '0;
 	always @(posedge clk_sys) begin
@@ -245,37 +255,143 @@ module emu
 	end
 	
 	wire [7:0] p0,p1,p2,p3,p4,p5,p6,p7,pA_o;
+	cabinet_sw_t key_cabinet_sw;
+	wire [PCB_PLAYER_SW_WIDTH-1:0] key_p1_sw,key_p2_sw,key_p3_sw,key_p4_sw;
+	wire       key_pause;
+	wire key_service_sw = key_p1_sw[P_SW_SERVICE] | key_p2_sw[P_SW_SERVICE];
+	wire [3:0] key_p1_system = {
+		key_service_sw,
+		key_cabinet_sw[C_SW_TEST],
+		key_cabinet_sw[C_SW_COIN1],
+		key_p1_sw[P_SW_START]
+	};
+	wire [3:0] key_p2_system = {
+		1'b0,
+		1'b0,
+		key_cabinet_sw[C_SW_COIN2],
+		key_p2_sw[P_SW_START]
+	};
+	wire [3:0] key_p3_system = {
+		1'b0,
+		1'b0,
+		key_cabinet_sw[C_SW_COIN3],
+		key_p3_sw[P_SW_START]
+	};
+	wire [3:0] key_p4_system = {
+		1'b0,
+		1'b0,
+		key_cabinet_sw[C_SW_COIN4],
+		key_p4_sw[P_SW_START]
+	};
+
+	// The keyboard mapper reports generic arcade switches. Convert those into
+	// this core's existing joystick bit layout before the board-port packing.
+	function automatic [31:0] player_sw_to_core_joy;
+		input [PCB_PLAYER_SW_WIDTH-1:0] player_sw;
+	begin
+		player_sw_to_core_joy = '0;
+		player_sw_to_core_joy[0] = player_sw[P_SW_RIGHT];
+		player_sw_to_core_joy[1] = player_sw[P_SW_LEFT];
+		player_sw_to_core_joy[2] = player_sw[P_SW_DOWN];
+		player_sw_to_core_joy[3] = player_sw[P_SW_UP];
+		player_sw_to_core_joy[4] = player_sw[P_SW_PUSH1];
+		player_sw_to_core_joy[5] = player_sw[P_SW_PUSH2];
+		player_sw_to_core_joy[6] = player_sw[P_SW_PUSH3];
+		player_sw_to_core_joy[7] = player_sw[P_SW_PUSH4];
+	end
+	endfunction
+
+	function automatic [31:0] merge_arcade_input;
+		input [31:0] joy;
+		input [PCB_PLAYER_SW_WIDTH-1:0] player_sw;
+		input [ 3:0] key_system; // {Service, Test, Coin, Start}
+		input [ 2:0] input_mode;
+		reg   [31:0] merged;
+		reg   [31:0] sw_joy;
+	begin
+		merged = joy;
+		sw_joy = player_sw_to_core_joy(player_sw);
+		case (input_mode)
+			INPUT_1_PUSH_SWITCH: begin // 1 push switch, then Start/Coin/Test/Service
+				merged[4:0] = merged[4:0] | sw_joy[4:0];
+				merged[8:5] = merged[8:5] | key_system;
+			end
+			INPUT_2_PUSH_SWITCH: begin // 2 push switches, then Start/Coin/Test/Service
+				merged[5:0] = merged[5:0] | sw_joy[5:0];
+				merged[9:6] = merged[9:6] | key_system;
+			end
+			INPUT_3_PUSH_SWITCH: begin // 3 push switches, then Start/Coin/Test/Service
+				merged[6:0]  = merged[6:0]  | sw_joy[6:0];
+				merged[10:7] = merged[10:7] | key_system;
+			end
+			INPUT_4_PUSH_SWITCH: begin // 4 push switches, then Start/Coin/Test/Service
+				merged[7:0]  = merged[7:0]  | sw_joy[7:0];
+				merged[11:8] = merged[11:8] | key_system;
+			end
+			default: begin
+			end
+		endcase
+		merge_arcade_input = merged;
+	end
+	endfunction
+
+	mame_keyboard_switches #(
+		.PLAYERS(PCB_PLAYERS),
+		.PUSH_SWITCHES(PCB_PUSH_SWITCHES),
+		.PLAYER_SW_WIDTH(PCB_PLAYER_SW_WIDTH)
+	) mame_keyboard_switches_inst
+	(
+		.clk(clk_sys),
+		.reset(reset),
+		.ps2_key(ps2_key),
+		.cabinet_sw(key_cabinet_sw),
+		.p1_sw(key_p1_sw),
+		.p2_sw(key_p2_sw),
+		.p3_sw(key_p3_sw),
+		.p4_sw(key_p4_sw),
+		.pause(key_pause)
+	);
+
 	always_comb begin
 		reg [5:0] mp1_key,mp2_key;
+		reg [31:0] joy0,joy1,joy2,joy3;
 	
 		{mp1_key,mp2_key} = '0;
+		{joy0,joy1,joy2,joy3} = {joystick_0,joystick_1,joystick_2,joystick_3};
 		{p0,p1,p2,p3,p4,p5,p6,p7} = '1;
+		if (BOARD_CONF[6:4] != INPUT_MAHJONG) begin
+			joy0 = merge_arcade_input(joystick_0, key_p1_sw, key_p1_system, BOARD_CONF[6:4]);
+			joy1 = merge_arcade_input(joystick_1, key_p2_sw, key_p2_system, BOARD_CONF[6:4]);
+			joy2 = merge_arcade_input(joystick_2, key_p3_sw, key_p3_system, BOARD_CONF[6:4]);
+			joy3 = merge_arcade_input(joystick_3, key_p4_sw, key_p4_system, BOARD_CONF[6:4]);
+		end
+
 		if (ps3_board || ps5_board) begin	//PS3/PS5
-			if (BOARD_CONF[6:4] == 3'h0) begin
-				p0 = ~{joystick_0[3],joystick_0[2],joystick_0[0],joystick_0[1],joystick_0[4],2'b00,joystick_0[5]};
-				p1 = ~{joystick_1[3],joystick_1[2],joystick_1[0],joystick_1[1],joystick_1[4],2'b00,joystick_1[5]};
+			if (BOARD_CONF[6:4] == INPUT_1_PUSH_SWITCH) begin
+				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],2'b00,joy0[5]};
+				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],2'b00,joy1[5]};
 				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joystick_0[7],joystick_0[8],2'b11,joystick_1[6],joystick_0[6]};
+				p3 = ~{1'b0,~dip_sw[6],joy0[7],joy0[8],2'b11,joy1[6],joy0[6]};
 			end
-			else if (BOARD_CONF[6:4] == 3'h1) begin
-				p0 = ~{joystick_0[3],joystick_0[2],joystick_0[0],joystick_0[1],joystick_0[4],joystick_0[5],1'b0,joystick_0[6]};
-				p1 = ~{joystick_1[3],joystick_1[2],joystick_1[0],joystick_1[1],joystick_1[4],joystick_1[5],1'b0,joystick_1[6]};
+			else if (BOARD_CONF[6:4] == INPUT_2_PUSH_SWITCH) begin
+				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],joy0[5],1'b0,joy0[6]};
+				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],joy1[5],1'b0,joy1[6]};
 				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joystick_0[8],joystick_0[9],2'b11,joystick_1[7],joystick_0[7]};
+				p3 = ~{1'b0,~dip_sw[6],joy0[8],joy0[9],2'b11,joy1[7],joy0[7]};
 			end
-			else if (BOARD_CONF[6:4] == 3'h2) begin
-				p0 = ~{joystick_0[3],joystick_0[2],joystick_0[0],joystick_0[1],joystick_0[4],joystick_0[5],joystick_0[6],joystick_0[7]};
-				p1 = ~{joystick_1[3],joystick_1[2],joystick_1[0],joystick_1[1],joystick_1[4],joystick_1[5],joystick_1[6],joystick_1[7]};
+			else if (BOARD_CONF[6:4] == INPUT_3_PUSH_SWITCH) begin
+				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],joy0[5],joy0[6],joy0[7]};
+				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],joy1[5],joy1[6],joy1[7]};
 				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joystick_0[9],joystick_0[10],2'b11,joystick_1[8],joystick_0[8]};
+				p3 = ~{1'b0,~dip_sw[6],joy0[9],joy0[10],2'b11,joy1[8],joy0[8]};
 			end
-			else if (BOARD_CONF[6:4] == 3'h3) begin
-				p0 = ~{joystick_0[3],joystick_0[2],joystick_0[0],joystick_0[1],joystick_0[4],joystick_0[5],1'b0,joystick_0[8]};
-				p1 = ~{joystick_1[3],joystick_1[2],joystick_1[0],joystick_1[1],joystick_1[4],joystick_1[5],1'b0,joystick_1[8]};
-				p2 = ~{joystick_0[6],joystick_0[7],2'b00,joystick_1[6],joystick_1[7],2'b00};
-				p3 = ~{1'b0,~dip_sw[6],joystick_0[10],joystick_0[11],2'b11,joystick_1[9],joystick_0[9]};
+			else if (BOARD_CONF[6:4] == INPUT_4_PUSH_SWITCH) begin
+				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],joy0[5],1'b0,joy0[8]};
+				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],joy1[5],1'b0,joy1[8]};
+				p2 = ~{joy0[6],joy0[7],2'b00,joy1[6],joy1[7],2'b00};
+				p3 = ~{1'b0,~dip_sw[6],joy0[10],joy0[11],2'b11,joy1[9],joy0[9]};
 			end
-			else if (BOARD_CONF[6:4] == 3'h4) begin //mahjong panel
+			else if (BOARD_CONF[6:4] == INPUT_MAHJONG) begin //mahjong panel
 				if      (joystick_0[ 4]) {p0,p1} = ~16'h8080;
 				else if (joystick_0[ 5]) {p0,p1} = ~16'h8040;
 				else if (joystick_0[ 6]) {p0,p1} = ~16'h8010;
@@ -301,29 +417,29 @@ module emu
 			end
 		end
 		else begin	//PS4 
-			if (BOARD_CONF[6:4] == 3'h2) begin //3 buttons
-				p0 = ~{joystick_0[7],joystick_0[6],joystick_0[5],joystick_0[4],joystick_0[0],joystick_0[1],joystick_0[2],joystick_0[3]};
-				p1 = ~{joystick_1[7],joystick_1[6],joystick_1[5],joystick_1[4],joystick_1[0],joystick_1[1],joystick_1[2],joystick_1[3]};
+			if (BOARD_CONF[6:4] == INPUT_3_PUSH_SWITCH) begin //3 push switches
+				p0 = ~{joy0[7],joy0[6],joy0[5],joy0[4],joy0[0],joy0[1],joy0[2],joy0[3]};
+				p1 = ~{joy1[7],joy1[6],joy1[5],joy1[4],joy1[0],joy1[1],joy1[2],joy1[3]};
 				p2 = 8'hFF;
-				p3 = ~{joystick_3[10]|joystick_2[10],~dip_sw[6],joystick_0[9],joystick_1[10]|joystick_0[10],joystick_3[8],joystick_2[8],joystick_1[8],joystick_0[8]};
+				p3 = ~{joy3[10]|joy2[10],~dip_sw[6],joy0[9],joy1[10]|joy0[10],joy3[8],joy2[8],joy1[8],joy0[8]};
 				
-				p4 = ~{joystick_2[7],joystick_2[6],joystick_2[5],joystick_2[4],joystick_2[0],joystick_2[1],joystick_2[2],joystick_2[3]};
-				p5 = ~{joystick_3[7],joystick_3[6],joystick_3[5],joystick_3[4],joystick_3[0],joystick_3[1],joystick_3[2],joystick_3[3]};
+				p4 = ~{joy2[7],joy2[6],joy2[5],joy2[4],joy2[0],joy2[1],joy2[2],joy2[3]};
+				p5 = ~{joy3[7],joy3[6],joy3[5],joy3[4],joy3[0],joy3[1],joy3[2],joy3[3]};
 				p6 = 8'hFF;
 				p7 = 8'hFF;
 			end
-			else if (BOARD_CONF[6:4] == 3'h3) begin //4 buttons
-				p0 = ~{joystick_0[8],3'b000,joystick_0[7],joystick_0[6],joystick_0[5],joystick_0[4]};
-				p1 = ~{joystick_1[8],3'b000,joystick_1[7],joystick_1[6],joystick_1[5],joystick_1[4]};
+			else if (BOARD_CONF[6:4] == INPUT_4_PUSH_SWITCH) begin //4 push switches
+				p0 = ~{joy0[8],3'b000,joy0[7],joy0[6],joy0[5],joy0[4]};
+				p1 = ~{joy1[8],3'b000,joy1[7],joy1[6],joy1[5],joy1[4]};
 				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joystick_0[10],joystick_0[11],2'b11,joystick_1[9],joystick_0[9]};
+				p3 = ~{1'b0,~dip_sw[6],joy0[10],joy0[11],2'b11,joy1[9],joy0[9]};
 				
-				p4 = ~{joystick_2[8],3'b000,joystick_2[7],joystick_2[6],joystick_2[5],joystick_2[4]};
-				p5 = ~{joystick_3[8],3'b000,joystick_3[7],joystick_3[6],joystick_3[5],joystick_3[4]};
+				p4 = ~{joy2[8],3'b000,joy2[7],joy2[6],joy2[5],joy2[4]};
+				p5 = ~{joy3[8],3'b000,joy3[7],joy3[6],joy3[5],joy3[4]};
 				p6 = 8'hFF;
-				p7 = ~{joystick_3[11]|joystick_2[11],~dip_sw[6],joystick_0[10],joystick_1[11]|joystick_1[11],joystick_3[9],joystick_2[9],joystick_1[9],joystick_0[9]};
+				p7 = ~{joy3[11]|joy2[11],~dip_sw[6],joy0[10],joy1[11]|joy1[11],joy3[9],joy2[9],joy1[9],joy0[9]};
 			end
-			else if (BOARD_CONF[6:4] == 3'h4) begin //mahjong panel
+			else if (BOARD_CONF[6:4] == INPUT_MAHJONG) begin //mahjong panel
 				if (pA_o[0]) mp1_key = {joystick_0[23],joystick_0[20],joystick_0[16],joystick_0[12],joystick_0[ 8],joystick_0[4]};
 				if (pA_o[1]) mp1_key = {joystick_0[24],joystick_0[21],joystick_0[17],joystick_0[13],joystick_0[ 9],joystick_0[5]};
 				if (pA_o[2]) mp1_key = {1'b0          ,joystick_0[22],joystick_0[18],joystick_0[14],joystick_0[10],joystick_0[6]};
@@ -689,7 +805,7 @@ module emu
 
 	assign DRAM_DI = dram_do;
 	assign ROM_D = !PROM_CE_N ? prom_do : {16'h0000,drom_do};
-	assign MEM_WAIT_N = (OSD_STATUS && status[18]) || status[19] ? 1'b0 :
+	assign MEM_WAIT_N = (OSD_STATUS && status[18]) || status[19] || key_pause ? 1'b0 :
 	                    !DRAM_CE_N ? ~dram_busy : 
 							  !PROM_CE_N ? ~prom_busy : ~drom_busy;
 	
