@@ -236,7 +236,8 @@ module PS6406B
 	wire [ 8: 0] LINE_BREAK = (REGS[3][7] == 1'b1 ? 9'h0FF : 9'h100);
 	wire [ 8: 0] HSYNC_START = 9'h168 + HS_OFFS;
 	wire [ 8: 0] VBLK_START = REGS[3][7] == 1'b1 ? 9'h0F0 : 9'h0E0;
-	wire [ 8: 0] VSYNC_START = REGS[3][7] == 1'b1 ? 9'd237+9'd16 : 9'd237;
+	wire [ 8: 0] VSYNC_START = REGS[3][7] == 1'b1 ? 9'd244 : 9'd237;
+	wire [ 8: 0] VSYNC_WIDTH = REGS[3][7] == 1'b1 ? 9'd4   : 9'd3;
 	bit  [ 8: 0] HCNT;
 	bit  [ 8: 0] VCNT;
 	bit          HSYNC;
@@ -279,7 +280,7 @@ module PS6406B
 				if (HCNT == 9'h1FF && VCNT == VSYNC_START - 9'd1) begin
 					VSYNC <= 1;
 				end
-				if (HCNT == 9'h1FF && VCNT == VSYNC_START + 9'd3 - 1) begin
+				if (HCNT == 9'h1FF && VCNT == VSYNC_START + VSYNC_WIDTH - 9'd1) begin
 					VSYNC <= 0;
 				end
 				
