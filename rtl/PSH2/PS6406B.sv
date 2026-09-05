@@ -233,11 +233,12 @@ module PS6406B
 	assign DOT_CE_R = (DOTCLK_DIV == 3) & CE;
 	
 	wire [ 8: 0] DOT_BREAK = (REGS[3][7] == 1'b1 ? 9'd443 : 9'd456) - 9'd8;
-	wire [ 8: 0] LINE_BREAK = (REGS[3][7] == 1'b1 ? 9'h0FF : 9'h100);
+	// Original hardware uses 262 total lines and a four-line VSYNC in both modes.
+	wire [ 8: 0] LINE_BREAK = 9'h0FF;
 	wire [ 8: 0] HSYNC_START = 9'h168 + HS_OFFS;
 	wire [ 8: 0] VBLK_START = REGS[3][7] == 1'b1 ? 9'h0F0 : 9'h0E0;
-	wire [ 8: 0] VSYNC_START = REGS[3][7] == 1'b1 ? 9'd244 : 9'd237;
-	wire [ 8: 0] VSYNC_WIDTH = REGS[3][7] == 1'b1 ? 9'd4   : 9'd3;
+	wire [ 8: 0] VSYNC_START = REGS[3][7] == 1'b1 ? 9'd244 : 9'd236;
+	wire [ 8: 0] VSYNC_WIDTH = 9'd4;
 	bit  [ 8: 0] HCNT;
 	bit  [ 8: 0] VCNT;
 	bit          HSYNC;
