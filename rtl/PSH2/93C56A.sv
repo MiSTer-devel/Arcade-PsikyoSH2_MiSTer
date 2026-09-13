@@ -19,7 +19,7 @@ module E93C56A
 		SK_OLD <= SK;
 		CS_OLD <= CS;
 	end
-	wire SK_FALL = !SK &  SK_OLD;
+//	wire SK_FALL = !SK &  SK_OLD;
 	wire SK_RISE =  SK & !SK_OLD;
 	wire CS_FALL = !CS &  CS_OLD;
 	wire CS_RISE =  CS & !CS_OLD;
