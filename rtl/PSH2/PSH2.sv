@@ -66,7 +66,8 @@ module PSH2
 	input      [ 5: 0] SCRN_EN,
 	input      [ 8: 0] HS_OFFS,
 	input      [ 2: 0] SND_EN,
-	input              SND_MONO
+	input              SND_MONO,
+	input              SND_STOP
 	
 `ifdef DEBUG
                       ,
@@ -413,11 +414,12 @@ module PSH2
 		.MWR_N(),
 		.MCS_N(YMF_MCS_N),
 	
-		.OUT1_L(SOUND_L),
-		.OUT1_R(SOUND_R),
+		.OUT2_L(SOUND_L),
+		.OUT2_R(SOUND_R),
 		
 		.SND_EN(SND_EN),
-		.MONO(SND_MONO)
+		.MONO(SND_MONO),
+		.KEYS_OFF(SND_STOP)
 	);
 	
 	always_comb begin

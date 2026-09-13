@@ -3,11 +3,12 @@
 package YMF278B_PKG;
 
 
-	typedef bit [1:0] EGState_t;
-	parameter EGState_t EST_ATTACK  = 2'b00;
-	parameter EGState_t EST_DECAY1  = 2'b01;
-	parameter EGState_t EST_DECAY2  = 2'b10;
-	parameter EGState_t EST_RELEASE = 2'b11;
+	typedef bit [2:0] EGState_t;
+	parameter EGState_t EST_ATTACK  = 3'b000;
+	parameter EGState_t EST_DECAY1  = 3'b001;
+	parameter EGState_t EST_DECAY2  = 3'b010;
+	parameter EGState_t EST_RELEASE = 3'b011;
+	parameter EGState_t EST_REVERB  = 3'b100;
 	
 	typedef struct packed
 	{
@@ -153,7 +154,7 @@ package YMF278B_PKG;
 		return {TEMP2[6],RES};
 	endfunction
 	
-	function bit EnvStep(bit [17:0] CNT, bit [5:0] ERATE);
+	function bit EnvStep(bit [13:0] CNT, bit [5:0] ERATE);
 		bit RET;
 
 		case (ERATE[5:2])
@@ -241,24 +242,22 @@ package YMF278B_PKG;
       4'h8,4'h8,4'h8,4'h8,4'h8,4'h8,4'h8,4'h8
 	};
 	
-	function bit [3:0] EnvInc(bit [17:0] CNT, bit [5:0] ERATE);
-		bit [2:0] IDX;
+	function bit [3:0] EnvInc(bit [13:0] CNT, bit [5:0] ERATE);
+		bit [ 3: 0] SHIFT;
+		bit [13: 0] CNT_SHIFTED;
+		bit [ 2: 0] IDX;
 
-		case (ERATE[5:2])
-			4'hC: IDX = CNT[14:12];
-			4'hD: IDX = CNT[15:13];
-			4'hE: IDX = CNT[16:14];
-			4'hF: IDX = CNT[17:15];
-			default: IDX = CNT[13:11];
-		endcase
+		SHIFT = ERATE[5:2] <= 4'hB ? (4'hB-ERATE[5:2]) : 4'h0;
+		CNT_SHIFTED = CNT[13:0]>>SHIFT;
+		IDX = CNT_SHIFTED[2:0];
 			
 		return EncIncTbl[{ERATE,IDX}];
 	endfunction
 	
 	function bit [15:0] Interpolate(input bit [15:0] WAVE0, input bit [15:0] WAVE1, bit [5:0] PHASE);
-		bit [ 6:0] PHASE_NEG;
-		bit [21:0] TEMP0,TEMP1;
-		bit [21:0] SUM;
+		bit [ 6: 0] PHASE_NEG;
+		bit [21: 0] TEMP0,TEMP1;
+		bit [21: 0] SUM;
 		
 		PHASE_NEG = 7'h40 - PHASE;
 		TEMP0 = $signed(WAVE0) * PHASE_NEG;
@@ -295,7 +294,7 @@ package YMF278B_PKG;
 		
 		return !SUM[10] ? SUM[9:0] : 10'h3FF;
 	endfunction
-
+	
 	function bit signed [15:0] VolCalc(bit signed [15:0] WAVE, bit [9:0] LEVEL);
 		bit [22:0] MULT;
 		bit [15:0] RES;
@@ -309,13 +308,13 @@ package YMF278B_PKG;
 	function bit signed [15:0] MixCalc(bit signed [15:0] WAVE, bit [2:0] MIX);
 		bit [15:0] TEMP;
 		
-		TEMP = $signed($signed(WAVE)>>>{MIX,1'b0});
+		TEMP = $signed($signed(WAVE)>>>MIX[2:1]);
 		
-		return TEMP;
+		return MIX == 3'h7 ? '0 : $signed(TEMP) - (MIX[0] ? $signed({TEMP[15],TEMP[15],TEMP[15:2]}) : '0);
 	endfunction
 	
-	function bit signed [15:0] TrimWave(bit signed [17:0] WAVE);
-		return WAVE[17] && WAVE[16:15] != 2'b11 ? 16'h8000 : !WAVE[17] && WAVE[16:15] != 2'b00 ? 16'h7FFF : WAVE[15:0];
+	function bit signed [16:0] TrimWave(bit signed [17:0] WAVE);
+		return WAVE[17] && WAVE[16:15] != 2'b11 ? {1'b1,16'h8000} : !WAVE[17] && WAVE[16:15] != 2'b00 ? {1'b1,16'h7FFF} : {1'b0,WAVE[15:0]};
 	endfunction
 	
 endpackage

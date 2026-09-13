@@ -37,7 +37,8 @@ module YMF278B
 	output     [15: 0] OUT2_R,
 	
 	input      [ 2: 0] SND_EN,
-	input              MONO
+	input              MONO,
+	input              KEYS_OFF
 	
 `ifdef DEBUG
                       ,
@@ -45,7 +46,8 @@ module YMF278B
 	output             DECAY1_DBG,
 	output             DECAY2_DBG,
 	output             RELEASE_DBG,
-	output reg [15: 0] TEMP_L_DBG,TEMP_R_DBG
+	output reg [15: 0] TEMP_L_DBG,TEMP_R_DBG,
+	output reg         PCM_L_OVF,PCM_R_OVF
 `endif
 );
 
@@ -117,7 +119,7 @@ module YMF278B
 	wire SLOT0_CE = SLOT0_EN & CYCLE1_CE;
 	wire SLOT1_CE = SLOT1_EN & CYCLE1_CE;
 		
-	bit  [ 4: 0] EVOL_RA,SA_RA,FNUM_RA,LFO_RA;
+	bit  [ 4: 0] EVOL_RA,SA_RA,FNUM_RA,LFO_RA,KON_RA;
 	always_comb begin
 		casex (CYCLE_NUM[2:1])
 			2'b0x: begin
@@ -125,43 +127,43 @@ module YMF278B
 				FNUM_RA = SLOT;//OP1
 				EVOL_RA = OP2.SLOT;//OP2
 				LFO_RA = SLOT;//OP1
+				KON_RA = SLOT;//OP1
 			end
 			2'b1x: begin
 				SA_RA = OP2.SLOT;//OP2
 				FNUM_RA = OP4.SLOT;//OP4
 				EVOL_RA = OP4.SLOT;//OP4
 				LFO_RA = OP4.SLOT;//OP4
+				KON_RA = OP4.SLOT;//OP4
 			end
 		endcase
 	end
 	
 	//Operation 1: PLFO, PG, KEY ON/OFF
-	bit          REG_KB[24],REG_LOAD[24];
+	bit          REG_LOAD[24];
 	bit  [ 4: 0] SLOT;
 	bit          RST;
 	bit  [ 3: 0] OP1_OCT;
-	bit          OP1_PREVERB;
 	bit  [ 9: 0] OP1_FNUM;
-	bit  [ 2: 0] OP1_LFO,OP1_VIB;
-	bit          OP1_LFORST;
 	bit  [ 8: 0] OP1_WTN;
-	bit  [ 3: 0] OP1_LOAD_POS;
+	bit  [ 2: 0] OP1_LFO,OP1_VIB;
+	bit          OP1_KON,OP1_LFORST;
 	always @(posedge CLK or negedge RST_N) begin
-		bit  [ 9: 0] OP1_LFO_DIV;
-		bit  [ 7: 0] OP1_LFO_DATA;
 		bit          REG_KB_OLD[24];
 		bit  [ 7: 0] PLFO_WAVE;
 		bit  [22: 0] PHASE;
+		bit  [ 3: 0] OP1_LOAD_POS;
+		bit  [ 3: 0] NEW_LOAD_POS;
+		bit  [ 9: 0] OP1_LFO_DIV;
+		bit  [ 7: 0] OP1_LFO_DATA;
 		bit  [ 7: 0] NEW_LFO_DATA;
 		bit  [ 9: 0] NEW_LFO_DIV;
-		bit  [ 3: 0] NEW_LOAD_POS;
 		
 		if (!RST_N) begin
 			{OP1_OCT,OP1_FNUM} <= '0;
-			{OP1_LFO,OP1_VIB} <= '0;
-			OP1_LFORST <= 0;
 			OP1_WTN <= '0;
-			REG_KB <= '{24{0}};
+			{OP1_LFO,OP1_VIB} <= '0;
+			{OP1_KON,OP1_LFORST} <= '0;
 			REG_KB_OLD <= '{24{0}};
 			REG_LOAD <= '{24{0}};
 			SLOT <= '0;
@@ -169,10 +171,9 @@ module YMF278B
 			OP2 <= OP2_RESET;
 		end else if (!RES_N) begin
 			{OP1_OCT,OP1_FNUM} <= '0;
-			{OP1_LFO,OP1_VIB} <= '0;
-			OP1_LFORST <= 0;
 			OP1_WTN <= '0;
-			REG_KB <= '{24{0}};
+			{OP1_LFO,OP1_VIB} <= '0;
+			{OP1_KON,OP1_LFORST} <= '0;
 			REG_KB_OLD <= '{24{0}};
 			REG_LOAD <= '{24{0}};
 			SLOT <= '0;
@@ -182,59 +183,52 @@ module YMF278B
 			if (CYCLE0_CE) begin
 				case (CYCLE_NUM[2:1])
 					2'b00: begin
-						{OP1_OCT,OP1_PREVERB,OP1_FNUM} <= REG_FNUM_Q[15:1];
+						OP1_OCT <= REG_FNUM_Q[15:12];
+						{OP1_FNUM,OP1_WTN} <= {REG_FNUM_Q[10:0],REG_WTN_Q};
 						{OP1_LFO,OP1_VIB} <= REG_LFO_Q[5:0];
-						OP1_LFORST <= REG_PAN_Q[5];
-						OP1_WTN <= {REG_FNUM_Q[0],REG_WTN_Q};
-						{OP1_LOAD_POS,OP1_LFO_DIV,OP1_LFO_DATA} <= LFO_RAM_Q;
+						OP1_LFORST <= REG_KON_Q[0];
+						OP1_KON <= REG_KON_Q[2];
+						{OP1_LFO_DIV,OP1_LFO_DATA} <= LFO_RAM_Q;
+						OP1_LOAD_POS <= LD_KEY_RAM_Q[5:2];
 					end
 				endcase
 			end
 			
 			//Key on/off, header load
 			if (CYCLE1_CE) begin
-				if (REG_PAN_SEL && REG_WR) begin
-					REG_KB[REG_A[4:0] - 5'h8] <= REG_D[7];
-				end
 				if (REG_WTN_SEL && REG_WR) begin
 					REG_LOAD[REG_A[4:0] - 5'h8] <= 1;
 				end
 			end
 			if (SLOT1_CE) begin
-				KEY_RAM_D[1:0] <= '0;
-				if (REG_KB[SLOT] && !REG_KB_OLD[SLOT]) begin
-					KEY_RAM_D[0] <= 1;
+				LD_KEY_RAM_D[1:0] <= '0;
+				if (OP1_KON && !REG_KB_OLD[SLOT]) begin
+					LD_KEY_RAM_D[0] <= 1;
 				end
-				if (!REG_KB[SLOT] && REG_KB_OLD[SLOT]) begin
-					KEY_RAM_D[1] <= 1;
+				if (!OP1_KON && REG_KB_OLD[SLOT]) begin
+					LD_KEY_RAM_D[1] <= 1;
 				end
-				REG_KB_OLD[SLOT] <= REG_KB[SLOT];
-				
-				if (REG_LOAD[SLOT]) REG_LOAD[SLOT] <= 0;
+				if (KEYS_OFF) begin
+					LD_KEY_RAM_D[1] <= 1;
+				end
+				REG_KB_OLD[SLOT] <= OP1_KON;
 			end
-			
-			PLFO_WAVE <= VIBCalc(OP1_LFO_DATA, OP1_VIB);
-			PHASE = PhaseCalc(OP1_FNUM, OP1_OCT, PLFO_WAVE);
-			
 			if (SLOT1_CE) begin
-				OP2.SLOT <= SLOT;
-				OP2.RST <= RST;
-				OP2.KON <= KEY_RAM_Q[0];
-				OP2.KOFF <= KEY_RAM_Q[1];
-				OP2.LOAD <= KEY_RAM_Q[2];
-				OP2.PHASE <= PHASE;
-				OP2.WTN <= OP1_WTN;
-				OP2.LOAD_POS <= OP1_LOAD_POS;
-
-				SLOT <= SLOT + 5'd1;
-				if (SLOT == 5'd23) begin
-					SLOT <= '0;
-					RST <= 0;
-				end
+				if (REG_LOAD[SLOT]) REG_LOAD[SLOT] <= 0;
+				
+				if (LD_KEY_RAM_Q[6])
+					NEW_LOAD_POS = OP1_LOAD_POS + 4'd1;
+				else
+					NEW_LOAD_POS = '0;
+				LD_KEY_RAM_D[5:2] <= NEW_LOAD_POS;
+				
+				if (NEW_LOAD_POS == 4'd12) LD_KEY_RAM_D[6] <= 0;
+				else if (REG_LOAD[SLOT]) LD_KEY_RAM_D[6] <= 1;
+				else LD_KEY_RAM_D[6] <= LD_KEY_RAM_Q[6];
 			end
 			
 			//LFO
-			if (SLOT1_CE) begin				
+			if (SLOT1_CE) begin
 				if (!OP1_LFO_DIV) begin
 					NEW_LFO_DIV = LFOFreqDiv(OP1_LFO);
 					NEW_LFO_DATA = OP1_LFO_DATA + 8'd1;
@@ -247,28 +241,38 @@ module YMF278B
 					NEW_LFO_DATA = '0;
 				end
 				
-				if (KEY_RAM_Q[2])
-					NEW_LOAD_POS = OP1_LOAD_POS + 4'd1;
-				else
-					NEW_LOAD_POS = '0;
+				LFO_RAM_D <= {NEW_LFO_DIV,NEW_LFO_DATA};
+			end
 				
-				KEY_RAM_D[2] <= KEY_RAM_Q[2];
-				if (NEW_LOAD_POS == 4'd12) KEY_RAM_D[2] <= 0;
-				else if (REG_LOAD[SLOT]) KEY_RAM_D[2] <= 1;
-				
-				LFO_RAM_D <= {NEW_LOAD_POS,NEW_LFO_DIV,NEW_LFO_DATA};
+			PLFO_WAVE = VIBCalc(OP1_LFO_DATA, OP1_VIB);
+			PHASE = PhaseCalc(OP1_FNUM, OP1_OCT, PLFO_WAVE);
+			
+			if (SLOT1_CE) begin
+				OP2.SLOT <= SLOT;
+				OP2.RST <= RST;
+				OP2.KON <= LD_KEY_RAM_Q[0];
+				OP2.KOFF <= LD_KEY_RAM_Q[1];
+				OP2.LOAD <= LD_KEY_RAM_Q[6];
+				OP2.PHASE <= PHASE;
+				OP2.WTN <= OP1_WTN;
+				OP2.LOAD_POS <= OP1_LOAD_POS;
+
+				SLOT <= SLOT + 5'd1;
+				if (SLOT == 5'd23) begin
+					SLOT <= '0;
+					RST <= 0;
+				end
 			end
 		end
 	end
 	
-	bit  [ 2:0] KEY_RAM_D;
-	bit  [ 2:0] KEY_RAM_Q;
-	OPL4_CH_RAM #(5,3) KEY_RAM(CLK, OP2.SLOT, KEY_RAM_D, SLOT1_CE, SLOT, KEY_RAM_Q);
+	bit  [ 6:0] LD_KEY_RAM_D;
+	bit  [ 6:0] LD_KEY_RAM_Q;
+	OPL4_CH_RAM #(5,7) LD_KEY_RAM(CLK, OP2.SLOT, LD_KEY_RAM_D, SLOT1_CE, SLOT, LD_KEY_RAM_Q);
 	
-	bit  [21:0] LFO_RAM_D;
-	bit  [21:0] LFO_RAM_Q;
-	OPL4_CH_RAM #(5,22) LFO_RAM(CLK, OP2.SLOT, LFO_RAM_D, SLOT1_CE, LFO_RA, LFO_RAM_Q);
-
+	bit  [17:0] LFO_RAM_D;
+	bit  [17:0] LFO_RAM_Q;
+	OPL4_CH_RAM #(5,18) LFO_RAM(CLK, OP2.SLOT, LFO_RAM_D, SLOT1_CE, LFO_RA, LFO_RAM_Q);
 	
 	//Operation 2: MD read, ADP
 	bit  [ 1: 0] OP2_DATA_BIT;
@@ -276,7 +280,6 @@ module YMF278B
 	bit  [15: 0] OP2_LA;
 	bit  [15: 0] OP2_EA;	
 	always @(posedge CLK or negedge RST_N) begin
-		EGState_t    OP2_EST;	//Current envelope state
 		bit  [ 9: 0] OP2_EVOL;	//Current envelope volume
 		bit  [ 8: 0] PHASE_INT;	//New phase integer
 		bit  [13: 0] PHASE_FRAC;	//New phase fractional
@@ -308,7 +311,7 @@ module YMF278B
 				OP2_EA <= ~(REG_EA_Q) + 16'd1;
 				case (CYCLE_NUM[2:1])
 					2'b00: begin
-						{OP2_EST,OP2_EVOL} <= EVOL_RAM_Q;
+						OP2_EVOL <= EVOL_RAM_Q[9:0];
 					end
 				endcase
 			end
@@ -417,10 +420,12 @@ module YMF278B
 	//Operation 4: Interpolation, EG, ALFO
 	bit  [ 3: 0] OP4_AR,OP4_D1R,OP4_D2R,OP4_RR,OP4_RC,OP4_DL;
 	bit  [ 3: 0] OP4_OCT;
-	bit          OP4_FNUM9;
+	bit          OP4_FNUM9,OP4_REV;
 	bit  [ 9: 0] OP4_EVOL;	//Current envelope volume
 	EGState_t    OP4_EST;	//Current envelope state
-	bit  [18: 0] SCNT;		//Sample counter
+	bit          OP4_DAMP;
+	bit  [ 2: 0] OP4_AM;
+	bit  [14: 0] SCNT;		//Sample counter
 	always @(posedge CLK or negedge RST_N) begin
 		if (!RST_N) begin
 			SCNT <= '0;
@@ -441,42 +446,54 @@ module YMF278B
 	bit  [ 3: 0] ENV_INC;
 	always_comb begin
 		bit  [ 3: 0] RATE;
+		bit  [ 6: 0] EFF_RATE_TEMP;
 		
 		case (OP4_EST)
 			EST_ATTACK: RATE = OP4_AR;	
 			EST_DECAY1: RATE = OP4_D1R;
 			EST_DECAY2: RATE = OP4_D2R;
 			EST_RELEASE: RATE = OP4_RR;
+			default: RATE = 4'h5;
 		endcase
-		if (OP4_EST == EST_RELEASE && OP4.KON) begin
+		if (OP4_EST != EST_ATTACK && OP4.KON) begin
 			RATE = OP4_AR;
-		end else if (OP4_EST != EST_RELEASE && OP4.KOFF) begin
+		end else if (OP4_EST < EST_RELEASE && OP4.KOFF) begin
 			RATE = OP4_RR;
 		end
-		{EFF_RATE_OVR,EFF_RATE} = EffRateCalc(RATE, OP4_RC, OP4_OCT, OP4_FNUM9);
 		
-		ENV_STEP <= EnvStep(SCNT[18:1], EFF_RATE);
-		ENV_INC <= EnvInc(SCNT[18:1], EFF_RATE);
+		EFF_RATE_TEMP = EffRateCalc(RATE, OP4_RC, OP4_OCT, OP4_FNUM9);
+		if (OP4_EST == EST_DECAY1 && OP4_DAMP) begin
+			{EFF_RATE_OVR,EFF_RATE} = {1'b0,6'h30};
+		end else if ((OP4_EST == EST_DECAY2 || OP4_EST == EST_RELEASE) && OP4_DAMP) begin
+			{EFF_RATE_OVR,EFF_RATE} = {1'b0,6'h3F};
+		end else begin
+			{EFF_RATE_OVR,EFF_RATE} = EFF_RATE_TEMP;
+		end
+		
+		ENV_STEP <= EnvStep(SCNT[14:1], EFF_RATE);
+		ENV_INC <= EnvInc(SCNT[14:1], EFF_RATE);
 	end
 	
-	bit  [ 7: 0] OP4_LFO_DATA;
-	bit  [ 2: 0] OP4_AM;
 	always @(posedge CLK or negedge RST_N) begin
+		bit  [14: 0] ATTACK_VOL_INC;
 		bit  [10: 0] ATTACK_VOL_CALC,DECAY_VOL_CALC;
 		bit  [ 9: 0] NEW_EVOL;
-		bit  [ 1: 0] NEW_EST;
+		EGState_t    NEW_EST;
 		bit  [15: 0] PWD;
+		bit  [ 7: 0] LFO_DATA;
 		
 		if (!RST_N) begin
 			OP5 <= OP5_RESET;
 			{OP4_AR,OP4_D1R,OP4_D2R,OP4_RR,OP4_RC,OP4_DL} <= '0;
-			{OP4_OCT,OP4_FNUM9} <= '0;
+			{OP4_OCT,OP4_REV,OP4_FNUM9} <= '0;
 			{OP4_EST,OP4_EVOL} <= '0;
+			OP4_DAMP <= 0;
 		end else if (!RES_N) begin
 			OP5 <= OP5_RESET;
 			{OP4_AR,OP4_D1R,OP4_D2R,OP4_RR,OP4_RC,OP4_DL} <= '0;
-			{OP4_OCT,OP4_FNUM9} <= '0;
+			{OP4_OCT,OP4_REV,OP4_FNUM9} <= '0;
 			{OP4_EST,OP4_EVOL} <= '0;
+			OP4_DAMP <= 0;
 		end else begin
 			if (CYCLE0_CE) begin
 				{OP4_AR,OP4_D1R} <= REG_RATE0_Q;
@@ -485,10 +502,10 @@ module YMF278B
 				OP4_AM <= REG_AM_Q[2:0];
 				case (CYCLE_NUM[2:1])
 					2'b10: begin
-						OP4_OCT <= REG_FNUM_Q[15:12];
-						OP4_FNUM9 <= REG_FNUM_Q[10];
+						{OP4_OCT,OP4_REV,OP4_FNUM9} <= REG_FNUM_Q[15:10];
 						{OP4_EST,OP4_EVOL} <= EVOL_RAM_Q;
-						OP4_LFO_DATA <= LFO_RAM_Q[7:0];
+						OP4_DAMP <= REG_KON_Q[1];
+						LFO_DATA <= LFO_RAM_Q[7:0];
 					end
 				endcase
 			end
@@ -508,18 +525,19 @@ module YMF278B
 				NEW_EVOL = OP4_EVOL;
 				NEW_EST = OP4_EST;
 				
-				ATTACK_VOL_CALC = {1'b0,OP4_EVOL} + (ENV_STEP ? $signed($signed(~{1'b0,OP4_EVOL}) * $unsigned(ENV_INC)) : 11'd0);
+				ATTACK_VOL_INC = (OP4_EVOL + 10'd1) * ENV_INC;
+				ATTACK_VOL_CALC = {1'b0,OP4_EVOL} - (ENV_STEP ? ATTACK_VOL_INC[14:4] : 11'd0);
 				DECAY_VOL_CALC = {1'b0,OP4_EVOL} + (ENV_STEP ? {7'b0000000,ENV_INC} : 11'd0);
 				if (OP4.RST) begin
 					NEW_EVOL = 10'h3FF;
 					NEW_EST = EST_RELEASE;
-				end else if (OP4_EST == EST_RELEASE && OP4.KON) begin
-					NEW_EVOL = EFF_RATE_OVR ? 10'h000 : 10'h280;
+				end else if (OP4_EST != EST_ATTACK && OP4.KON) begin
+					NEW_EVOL = EFF_RATE_OVR || EFF_RATE == 6'h3F ? 10'h000 : OP4_EVOL;
 					NEW_EST = EST_ATTACK;
 `ifdef DEBUG
 					ATTACK_DBG <= 1;
 `endif
-				end else if (OP4_EST != EST_RELEASE && OP4.KOFF) begin
+				end else if (OP4_EST < EST_RELEASE && OP4.KOFF) begin
 					NEW_EST = EST_RELEASE;
 `ifdef DEBUG
 					RELEASE_DBG <= 1;
@@ -546,7 +564,10 @@ module YMF278B
 							end else begin
 								NEW_EVOL = 10'h3FF;
 							end
-							if (OP4_EVOL[9:5] == {&OP4_DL,OP4_DL}) begin
+							if (DECAY_VOL_CALC >= 10'h0C0 && OP4_REV) begin
+								NEW_EST = EST_REVERB;
+							end
+							else if (OP4_EVOL[9:5] == (OP4_DAMP ? 5'h08 : {&OP4_DL,OP4_DL})) begin
 								NEW_EST = EST_DECAY2;
 `ifdef DEBUG
 								DECAY2_DBG <= 1;
@@ -560,6 +581,9 @@ module YMF278B
 							end else begin
 								NEW_EVOL = 10'h3FF;
 							end
+							if (DECAY_VOL_CALC >= 10'h0C0 && OP4_REV) begin
+								NEW_EST = EST_REVERB;
+							end
 						end
 						
 						EST_RELEASE: begin
@@ -567,6 +591,9 @@ module YMF278B
 								NEW_EVOL = DECAY_VOL_CALC[9:0];
 							end else begin
 								NEW_EVOL = 10'h3FF;
+							end
+							if (DECAY_VOL_CALC >= 10'h0C0 && OP4_REV) begin
+								NEW_EST = EST_REVERB;
 							end
 						end
 					endcase
@@ -580,13 +607,13 @@ module YMF278B
 				OP5.EVOL <= NEW_EVOL;
 				
 				OP5.WD <= Interpolate(PWD, OP4.WD, OP4.MODF);
-				OP5.ALFO <= AMCalc(OP4_LFO_DATA, OP4_AM);
+				OP5.ALFO <= AMCalc(LFO_DATA, OP4_AM);
 			end
 		end
 	end
-	bit [11:0] EVOL_RAM_D;
-	bit [11:0] EVOL_RAM_Q;
-	OPL4_CH_RAM #(5,12) EVOL_RAM(CLK, OP5.SLOT, EVOL_RAM_D, SLOT1_CE, EVOL_RA, EVOL_RAM_Q);
+	bit [12:0] EVOL_RAM_D;
+	bit [12:0] EVOL_RAM_Q;
+	OPL4_CH_RAM #(5,13) EVOL_RAM(CLK, OP5.SLOT, EVOL_RAM_D, SLOT1_CE, EVOL_RA, EVOL_RAM_Q);
 
 	//Operation 5: Level calculation
 	bit  [ 6: 0] OP5_TL;
@@ -610,10 +637,10 @@ module YMF278B
 			if (SLOT1_CE) begin
 				if (OP5_LDIR) TL_RAM_D <= {OP5_TL,10'h000};
 				else begin
-					if (TL_INT > OP5_TL) begin
+					if (TL_INT < OP5_TL) begin
 						TL_RAM_D <= {TL_INT,TL_FRAC} + 17'd19;
 					end
-					else if (TL_INT < OP5_TL) begin
+					else if (TL_INT > OP5_TL) begin
 						TL_RAM_D <= {TL_INT,TL_FRAC} - 17'd38;
 					end
 					else begin
@@ -653,8 +680,8 @@ module YMF278B
 				OP7.KON <= OP6.KON;
 				OP7.KOFF <= OP6.KOFF;
 				OP7.WD <= OP6.WD;
-				OP7.LVLL <= !OP6_CH ? LevelAddPanL(OP6.LEVEL, MONO ? 4'h0 : OP6_PAN) : 10'h3FF;
-				OP7.LVLR <= !OP6_CH ? LevelAddPanR(OP6.LEVEL, MONO ? 4'h0 : OP6_PAN) : 10'h3FF;
+				OP7.LVLL <= !OP6_CH ? (LevelAddPanL(OP6.LEVEL, OP6_PAN)) : 10'h3FF;
+				OP7.LVLR <= !OP6_CH ? (LevelAddPanR(OP6.LEVEL, OP6_PAN)) : 10'h3FF;
 			end
 		end
 	end
@@ -672,7 +699,6 @@ module YMF278B
 			ACC_L <= 0;
 			ACC_R <= 0;
 		end else begin
-			
 			S = OP7.SLOT;
 			TEMP_L = VolCalc(OP7.WD, OP7.LVLL);
 			TEMP_R = VolCalc(OP7.WD, OP7.LVLR);
@@ -694,6 +720,7 @@ module YMF278B
 	
 	//Out
 	bit  [15: 0] PCM_L,PCM_R;
+	bit          PCM_L_OVF,PCM_R_OVF;
 	always @(posedge CLK or negedge RST_N) begin
 		if (!RST_N) begin
 			PCM_L <= '0;
@@ -702,8 +729,8 @@ module YMF278B
 			
 		end else begin
 			if (OP7.SLOT == 5'd0 && CYCLE_NUM[2:1] == 2'b00 && CYCLE1_CE) begin
-				PCM_L <= (!SND_EN[0] ? 16'h0000 : TrimWave(ACC_L));
-				PCM_R <= (!SND_EN[1] ? 16'h0000 : TrimWave(ACC_R));
+				{PCM_L_OVF,PCM_L} <= (!SND_EN[0] ? 16'h0000 : TrimWave(ACC_L + (MONO ? ACC_R : 18'h0)));
+				{PCM_R_OVF,PCM_R} <= (!SND_EN[1] ? 16'h0000 : TrimWave(ACC_R + (MONO ? ACC_L : 18'h0)));
 			end
 		end
 	end
@@ -905,16 +932,19 @@ module YMF278B
 	wire       REG_FNUM0_SEL = (REG_A >= 8'h38 && REG_A <= 8'h4F);
 	wire       REG_FNUM1_SEL = (REG_A >= 8'h20 && REG_A <= 8'h37);
 	bit [15:0] REG_FNUM_Q;
-	OPL4_REG_RAM #(5,8) REG_FNUM0(CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h18,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_FNUM0_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h18 : FNUM_RA ), REG_FNUM_Q[15:8]);
-	OPL4_REG_RAM #(5,8) REG_FNUM1(CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h00,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_FNUM1_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h00 : FNUM_RA ), REG_FNUM_Q[7:0]);
+	OPL4_REG_RAM #(5,8) REG_FNUM0(CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h18,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_FNUM0_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h18 : FNUM_RA), REG_FNUM_Q[15:8]);
+	OPL4_REG_RAM #(5,8) REG_FNUM1(CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h00,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_FNUM1_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h00 : FNUM_RA), REG_FNUM_Q[7:0]);
 	
 	wire       REG_LEVEL_SEL = (REG_A >= 8'h50 && REG_A <= 8'h67);
 	bit [ 7:0] REG_LEVEL_Q;
-	OPL4_REG_RAM #(5,8) REG_LEVEL(CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h10,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_LEVEL_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h10 : OP5.SLOT ), REG_LEVEL_Q);
+	OPL4_REG_RAM #(5,8) REG_LEVEL(CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h10,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_LEVEL_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h10 : OP5.SLOT), REG_LEVEL_Q);
 	
 	wire       REG_PAN_SEL = (REG_A >= 8'h68 && REG_A <= 8'h7F);
-	bit [ 7:0] REG_PAN_Q;
-	OPL4_REG_RAM #(5,8) REG_PAN  (CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h08,     RST ? '0 :                    REG_D,     RST ? 1'b1 : (REG_WR & REG_PAN_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h08 : OP6.SLOT ), REG_PAN_Q);
+	bit [ 4:0] REG_PAN_Q;
+	OPL4_REG_RAM #(5,5) REG_PAN  (CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h08,     RST ? '0 :                    REG_D[4:0],RST ? 1'b1 : (REG_WR & REG_PAN_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h08 : OP6.SLOT), REG_PAN_Q);
+	
+	bit [ 2:0] REG_KON_Q;
+	OPL4_REG_RAM #(5,3) REG_KON  (CLK,     RST ?     SLOT :                       REG_A[4:0]-5'h08,     RST ? '0 :                    REG_D[7:5],RST ? 1'b1 : (REG_WR & REG_PAN_SEL & CYCLE1_CE), (REG_RD ? REG_A[4:0]-5'h08 : KON_RA), REG_KON_Q);
 	
 	wire       REG_LFO_SEL = (REG_A >= 8'h80 && REG_A <= 8'h97);
 	wire       REG_LFO_LOAD  = (OP3.LOAD_POS == 4'h7);
