@@ -28,7 +28,6 @@ module emu
 	assign USER_OUT = 'Z;
 
 	assign AUDIO_S = 1;
-	assign AUDIO_MIX = '0;
 	assign HDMI_FREEZE = 0;
 	assign VGA_DISABLE = 0;
 	
@@ -37,6 +36,7 @@ module emu
 	assign LED_USER  = 0;
 	assign VGA_SCALER = 0;
 	assign HDMI_BLACKOUT = 1;
+	assign HDMI_BOB_DEINT = 0;
 
 	///////////////////////////////////////////////////
 	//
@@ -45,7 +45,7 @@ module emu
 	// 0         1         2         3          4         5         6   	   7         8         9
 	// 01234567890123456789012345678901 23456789012345678901234567890123 45678901234567890123456789012345
 	// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-	// XXXXXXXXXXXXXX  XXXX             XXXXXX
+	// XXXXXXXXX XXXXXXXXXXXXXXXXXXXXXX X     
 	
 	`include "build_id.v"
 	localparam CONF_STR = {
@@ -69,23 +69,22 @@ module emu
 		"P1,Audio & Video;",
 		"P1O[2:1],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 		"P1O[13:11],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+		"P1O[8:6],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer,HV-Integer;",
 		"P1-;",
-	
 		"D1P1O[4:3],Rotate,No,CCW,CW;",
 		"D1P1O[5],Flip 180,Off,On;",
 		"D2P1O[10],Two screen,Off,On;",
-		"P1O[8:6],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer,HV-Integer;",
 		"P1-;",
-		"P1O[9],Audio,Mono,Stereo;",
+		"P1O[20],CRT Adjust,Off,On;",
+		"P1O[27:21],CRT H-Position,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,+16,+17,+18,+19,+20,+21,+22,+23,+24,+25,+26,+27,+28,+29,+30,+31,+32,+33,+34,+35,+36,+37,+38,+39,+40,+41,+42,+43,+44,+45,+46,+47,+48,-48,-47,-46,-45,-44,-43,-42,-41,-40,-39,-38,-37,-36,-35,-34,-33,-32,-31,-30,-29,-28,-27,-26,-25,-24,-23,-22,-21,-20,-19,-18,-17,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
+		"P1O[32:28],CRT V-Shift,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
+		"P1-;",
+		"P1O[15:14],Audio,Mono1,Mono2,Stereo;",
 		"-;",
 		
 `ifdef DEBUG
 		"O[20],Debug port,Off,On;",
 `endif
-
-		"P2,Debug;",
-		"P2O[37:33],Hsync offs,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
-		"-;",
 
 		"R0,Reset;",
 		"J1,B1,B2,B3,Start,Coin,Test,Service;",
@@ -204,6 +203,7 @@ module emu
 	wire nvram_upload = ioctl_upload & (ioctl_index[5:0] == 6'h4);
 	
 	reg osd_btn = 0;
+	wire osd_pause = (OSD_STATUS && status[18]) || status[19];
 
 	///////////////////////////////////////////////////
 	wire clk_sys, clk_ram, locked;
@@ -239,14 +239,6 @@ module emu
 	wire ps3_board = (BOARD_CONF[1:0] == 2'h0);
 	wire ps5_board = (BOARD_CONF[1:0] == 2'h1);
 	wire ps4_board = (BOARD_CONF[1:0] == 2'h2);
-	localparam [2:0] INPUT_1_PUSH_SWITCH = 3'h0;
-	localparam [2:0] INPUT_2_PUSH_SWITCH = 3'h1;
-	localparam [2:0] INPUT_3_PUSH_SWITCH = 3'h2;
-	localparam [2:0] INPUT_4_PUSH_SWITCH = 3'h3;
-	localparam [2:0] INPUT_MAHJONG       = 3'h4;
-	localparam PCB_PLAYERS       = 4;
-	localparam PCB_PUSH_SWITCHES = 4;
-	localparam PCB_PLAYER_SW_WIDTH = P_SW_PUSH_BASE + PCB_PUSH_SWITCHES;
 	
 	reg [7:0] dip_sw = '0;
 	always @(posedge clk_sys) begin
@@ -254,212 +246,6 @@ module emu
 			dip_sw <= ioctl_data[7:0];
 	end
 	
-	wire [7:0] p0,p1,p2,p3,p4,p5,p6,p7,pA_o;
-	cabinet_sw_t key_cabinet_sw;
-	wire [PCB_PLAYER_SW_WIDTH-1:0] key_p1_sw,key_p2_sw,key_p3_sw,key_p4_sw;
-	wire       key_pause;
-	wire key_service_sw = key_p1_sw[P_SW_SERVICE] | key_p2_sw[P_SW_SERVICE];
-	wire [3:0] key_p1_system = {
-		key_service_sw,
-		key_cabinet_sw[C_SW_TEST],
-		key_cabinet_sw[C_SW_COIN1],
-		key_p1_sw[P_SW_START]
-	};
-	wire [3:0] key_p2_system = {
-		1'b0,
-		1'b0,
-		key_cabinet_sw[C_SW_COIN2],
-		key_p2_sw[P_SW_START]
-	};
-	wire [3:0] key_p3_system = {
-		1'b0,
-		1'b0,
-		key_cabinet_sw[C_SW_COIN3],
-		key_p3_sw[P_SW_START]
-	};
-	wire [3:0] key_p4_system = {
-		1'b0,
-		1'b0,
-		key_cabinet_sw[C_SW_COIN4],
-		key_p4_sw[P_SW_START]
-	};
-
-	// The keyboard mapper reports generic arcade switches. Convert those into
-	// this core's existing joystick bit layout before the board-port packing.
-	function automatic [31:0] player_sw_to_core_joy;
-		input [PCB_PLAYER_SW_WIDTH-1:0] player_sw;
-	begin
-		player_sw_to_core_joy = '0;
-		player_sw_to_core_joy[0] = player_sw[P_SW_RIGHT];
-		player_sw_to_core_joy[1] = player_sw[P_SW_LEFT];
-		player_sw_to_core_joy[2] = player_sw[P_SW_DOWN];
-		player_sw_to_core_joy[3] = player_sw[P_SW_UP];
-		player_sw_to_core_joy[4] = player_sw[P_SW_PUSH1];
-		player_sw_to_core_joy[5] = player_sw[P_SW_PUSH2];
-		player_sw_to_core_joy[6] = player_sw[P_SW_PUSH3];
-		player_sw_to_core_joy[7] = player_sw[P_SW_PUSH4];
-	end
-	endfunction
-
-	function automatic [31:0] merge_arcade_input;
-		input [31:0] joy;
-		input [PCB_PLAYER_SW_WIDTH-1:0] player_sw;
-		input [ 3:0] key_system; // {Service, Test, Coin, Start}
-		input [ 2:0] input_mode;
-		reg   [31:0] merged;
-		reg   [31:0] sw_joy;
-	begin
-		merged = joy;
-		sw_joy = player_sw_to_core_joy(player_sw);
-		case (input_mode)
-			INPUT_1_PUSH_SWITCH: begin // 1 push switch, then Start/Coin/Test/Service
-				merged[4:0] = merged[4:0] | sw_joy[4:0];
-				merged[8:5] = merged[8:5] | key_system;
-			end
-			INPUT_2_PUSH_SWITCH: begin // 2 push switches, then Start/Coin/Test/Service
-				merged[5:0] = merged[5:0] | sw_joy[5:0];
-				merged[9:6] = merged[9:6] | key_system;
-			end
-			INPUT_3_PUSH_SWITCH: begin // 3 push switches, then Start/Coin/Test/Service
-				merged[6:0]  = merged[6:0]  | sw_joy[6:0];
-				merged[10:7] = merged[10:7] | key_system;
-			end
-			INPUT_4_PUSH_SWITCH: begin // 4 push switches, then Start/Coin/Test/Service
-				merged[7:0]  = merged[7:0]  | sw_joy[7:0];
-				merged[11:8] = merged[11:8] | key_system;
-			end
-			default: begin
-			end
-		endcase
-		merge_arcade_input = merged;
-	end
-	endfunction
-
-	mame_keyboard_switches #(
-		.PLAYERS(PCB_PLAYERS),
-		.PUSH_SWITCHES(PCB_PUSH_SWITCHES),
-		.PLAYER_SW_WIDTH(PCB_PLAYER_SW_WIDTH)
-	) mame_keyboard_switches_inst
-	(
-		.clk(clk_sys),
-		.reset(reset),
-		.ps2_key(ps2_key),
-		.cabinet_sw(key_cabinet_sw),
-		.p1_sw(key_p1_sw),
-		.p2_sw(key_p2_sw),
-		.p3_sw(key_p3_sw),
-		.p4_sw(key_p4_sw),
-		.pause(key_pause)
-	);
-
-	always_comb begin
-		reg [5:0] mp1_key,mp2_key;
-		reg [31:0] joy0,joy1,joy2,joy3;
-	
-		{mp1_key,mp2_key} = '0;
-		{joy0,joy1,joy2,joy3} = {joystick_0,joystick_1,joystick_2,joystick_3};
-		{p0,p1,p2,p3,p4,p5,p6,p7} = '1;
-		if (BOARD_CONF[6:4] != INPUT_MAHJONG) begin
-			joy0 = merge_arcade_input(joystick_0, key_p1_sw, key_p1_system, BOARD_CONF[6:4]);
-			joy1 = merge_arcade_input(joystick_1, key_p2_sw, key_p2_system, BOARD_CONF[6:4]);
-			joy2 = merge_arcade_input(joystick_2, key_p3_sw, key_p3_system, BOARD_CONF[6:4]);
-			joy3 = merge_arcade_input(joystick_3, key_p4_sw, key_p4_system, BOARD_CONF[6:4]);
-		end
-
-		if (ps3_board || ps5_board) begin	//PS3/PS5
-			if (BOARD_CONF[6:4] == INPUT_1_PUSH_SWITCH) begin
-				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],2'b00,joy0[5]};
-				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],2'b00,joy1[5]};
-				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joy0[7],joy0[8],2'b11,joy1[6],joy0[6]};
-			end
-			else if (BOARD_CONF[6:4] == INPUT_2_PUSH_SWITCH) begin
-				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],joy0[5],1'b0,joy0[6]};
-				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],joy1[5],1'b0,joy1[6]};
-				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joy0[8],joy0[9],2'b11,joy1[7],joy0[7]};
-			end
-			else if (BOARD_CONF[6:4] == INPUT_3_PUSH_SWITCH) begin
-				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],joy0[5],joy0[6],joy0[7]};
-				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],joy1[5],joy1[6],joy1[7]};
-				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joy0[9],joy0[10],2'b11,joy1[8],joy0[8]};
-			end
-			else if (BOARD_CONF[6:4] == INPUT_4_PUSH_SWITCH) begin
-				p0 = ~{joy0[3],joy0[2],joy0[0],joy0[1],joy0[4],joy0[5],1'b0,joy0[8]};
-				p1 = ~{joy1[3],joy1[2],joy1[0],joy1[1],joy1[4],joy1[5],1'b0,joy1[8]};
-				p2 = ~{joy0[6],joy0[7],2'b00,joy1[6],joy1[7],2'b00};
-				p3 = ~{1'b0,~dip_sw[6],joy0[10],joy0[11],2'b11,joy1[9],joy0[9]};
-			end
-			else if (BOARD_CONF[6:4] == INPUT_MAHJONG) begin //mahjong panel
-				if      (joystick_0[ 4]) {p0,p1} = ~16'h8080;
-				else if (joystick_0[ 5]) {p0,p1} = ~16'h8040;
-				else if (joystick_0[ 6]) {p0,p1} = ~16'h8010;
-				else if (joystick_0[ 7]) {p0,p1} = ~16'h8020;
-				else if (joystick_0[ 8]) {p0,p1} = ~16'h4080;
-				else if (joystick_0[ 9]) {p0,p1} = ~16'h4040;
-				else if (joystick_0[10]) {p0,p1} = ~16'h4010;
-				else if (joystick_0[11]) {p0,p1} = ~16'h4020;
-				else if (joystick_0[12]) {p0,p1} = ~16'h1080;
-				else if (joystick_0[13]) {p0,p1} = ~16'h1040;
-				else if (joystick_0[14]) {p0,p1} = ~16'h1010;
-				else if (joystick_0[15]) {p0,p1} = ~16'h1020;
-				else if (joystick_0[16]) {p0,p1} = ~16'h2080;
-				else if (joystick_0[17]) {p0,p1} = ~16'h2040;
-				else if (joystick_0[18]) {p0,p1} = ~16'h0880;
-				else if (joystick_0[19]) {p0,p1} = ~16'h2020;
-				else if (joystick_0[20]) {p0,p1} = ~16'h2010;
-				else if (joystick_0[21]) {p0,p1} = ~16'h0840;
-				else if (joystick_0[22]) {p0,p1} = ~16'h0810;
-				else if (joystick_0[23]) {p0,p1} = ~16'h0480;
-				else {p0,p1} = ~16'h0000;
-				p3 = ~{1'b0,~dip_sw[6],joystick_0[25],joystick_0[26],2'b11,joystick_1[24],joystick_0[24]};
-			end
-		end
-		else begin	//PS4 
-			if (BOARD_CONF[6:4] == INPUT_3_PUSH_SWITCH) begin //3 push switches
-				p0 = ~{joy0[7],joy0[6],joy0[5],joy0[4],joy0[0],joy0[1],joy0[2],joy0[3]};
-				p1 = ~{joy1[7],joy1[6],joy1[5],joy1[4],joy1[0],joy1[1],joy1[2],joy1[3]};
-				p2 = 8'hFF;
-				p3 = ~{joy3[10]|joy2[10],~dip_sw[6],joy0[9],joy1[10]|joy0[10],joy3[8],joy2[8],joy1[8],joy0[8]};
-				
-				p4 = ~{joy2[7],joy2[6],joy2[5],joy2[4],joy2[0],joy2[1],joy2[2],joy2[3]};
-				p5 = ~{joy3[7],joy3[6],joy3[5],joy3[4],joy3[0],joy3[1],joy3[2],joy3[3]};
-				p6 = 8'hFF;
-				p7 = 8'hFF;
-			end
-			else if (BOARD_CONF[6:4] == INPUT_4_PUSH_SWITCH) begin //4 push switches
-				p0 = ~{joy0[8],3'b000,joy0[7],joy0[6],joy0[5],joy0[4]};
-				p1 = ~{joy1[8],3'b000,joy1[7],joy1[6],joy1[5],joy1[4]};
-				p2 = 8'hFF;
-				p3 = ~{1'b0,~dip_sw[6],joy0[10],joy0[11],2'b11,joy1[9],joy0[9]};
-				
-				p4 = ~{joy2[8],3'b000,joy2[7],joy2[6],joy2[5],joy2[4]};
-				p5 = ~{joy3[8],3'b000,joy3[7],joy3[6],joy3[5],joy3[4]};
-				p6 = 8'hFF;
-				p7 = ~{joy3[11]|joy2[11],~dip_sw[6],joy0[10],joy1[11]|joy1[11],joy3[9],joy2[9],joy1[9],joy0[9]};
-			end
-			else if (BOARD_CONF[6:4] == INPUT_MAHJONG) begin //mahjong panel
-				if (pA_o[0]) mp1_key = {joystick_0[23],joystick_0[20],joystick_0[16],joystick_0[12],joystick_0[ 8],joystick_0[4]};
-				if (pA_o[1]) mp1_key = {joystick_0[24],joystick_0[21],joystick_0[17],joystick_0[13],joystick_0[ 9],joystick_0[5]};
-				if (pA_o[2]) mp1_key = {1'b0          ,joystick_0[22],joystick_0[18],joystick_0[14],joystick_0[10],joystick_0[6]};
-				if (pA_o[3]) mp1_key = {1'b0          ,1'b0          ,joystick_0[19],joystick_0[15],joystick_0[11],joystick_0[7]};
-				p0 = ~{2'b00,mp1_key};
-				p1 = 8'hFF;
-				p2 = 8'hFF;
-				p3 = ~{joystick_1[27],~dip_sw[6],joystick_0[26],joystick_0[27],1'b0,joystick_1[25],1'b0,joystick_0[25]};
-				
-				if (pA_o[0]) mp2_key = {joystick_1[23],joystick_1[20],joystick_1[16],joystick_1[12],joystick_1[ 8],joystick_1[4]};
-				if (pA_o[1]) mp2_key = {joystick_1[24],joystick_1[21],joystick_1[17],joystick_1[13],joystick_1[ 9],joystick_1[5]};
-				if (pA_o[2]) mp2_key = {1'b0          ,joystick_1[22],joystick_1[18],joystick_1[14],joystick_1[10],joystick_1[6]};
-				if (pA_o[3]) mp2_key = {1'b0          ,1'b0          ,joystick_1[19],joystick_1[15],joystick_1[11],joystick_1[7]};
-				p4 = ~{2'b00,mp2_key};
-				p5 = 8'hFF;
-				p6 = 8'hFF;
-				p7 = ~{joystick_1[27],~dip_sw[6],joystick_0[26],joystick_0[27],1'b0,joystick_1[25],1'b0,joystick_0[25]};
-			end
-		end
-	end
 	
 	wire [20: 1] ROM_A;
 	wire [31: 0] ROM_D;
@@ -547,8 +333,8 @@ module emu
 		.VBL_N(VBL_N),
 		.V240(V240),
 		
-		.SOUND_L(SOUND_L),
-		.SOUND_R(SOUND_R),
+		.SOUND_L(AUDIO_L),
+		.SOUND_R(AUDIO_R),
 		
 		.P0(p0),
 		.P1(p1),
@@ -564,18 +350,44 @@ module emu
 		.VER(BOARD_CONF[1:0]),
 		
 		.SCRN_EN(SCRN_EN),
-		.HS_OFFS({{4{status[37]}},status[37:33]}),
+		.HS_OFFS(9'h0),
 		.SND_EN(SND_EN),
-		.SND_MONO(~status[9])
+		.SND_MONO(status[15:14]==2'b00),
+		.SND_STOP(osd_pause|key_pause)
 		
 `ifdef DEBUG
 		,
 		.DBG_PAUSE(DBG_BREAK)
 `endif
 	);
+	
+	wire [ 7: 0] p0,p1,p2,p3,p4,p5,p6,p7,pA_o;
+	wire         key_pause;
+	HPS2INPUT hps2input
+	(
+		.clk(clk_sys),
+		.reset(reset),
+		
+		.joystick_0(joystick_0),
+		.joystick_1(joystick_1),
+		.joystick_2(joystick_2),
+		.joystick_3(joystick_3),
+		.ps2_key(ps2_key),
 
-	assign AUDIO_L = SOUND_L;
-	assign AUDIO_R = SOUND_R;
+		.BOARD_CONF(BOARD_CONF),
+		.dip_sw(dip_sw),
+		
+		.p0(p0),
+		.p1(p1),
+		.p2(p2),
+		.p3(p3),
+		.p4(p4),
+		.p5(p5),
+		.p6(p6),
+		.p7(p7),
+		.pA_o(pA_o),
+		.key_pause(key_pause)
+	);
 
 	
 	//GFX/Sound ROM 
@@ -805,7 +617,7 @@ module emu
 
 	assign DRAM_DI = dram_do;
 	assign ROM_D = !PROM_CE_N ? prom_do : {16'h0000,drom_do};
-	assign MEM_WAIT_N = (OSD_STATUS && status[18]) || status[19] || key_pause ? 1'b0 :
+	assign MEM_WAIT_N = osd_pause || key_pause ? 1'b0 :
 	                    !DRAM_CE_N ? ~dram_busy : 
 							  !PROM_CE_N ? ~prom_busy : ~drom_busy;
 	
@@ -1179,6 +991,53 @@ module emu
 		.DDRAM_RD      ()
 	);
 
+	reg crt_adj_on;
+	always @(posedge CLK_VIDEO) if (ce_pix) crt_adj_on <= status[20];
+
+	// H-Position: 7-bit wrap. 0..48 = +0..+48 (right), 49..96 = -48..-1 (left).
+	reg [6:0] hpos_d;
+	always @(posedge CLK_VIDEO) if (ce_pix) hpos_d <= status[27:21];
+	wire signed [8:0] hpos_off = (hpos_d <= 7'd48)
+		 ? $signed({2'b0, hpos_d})
+		 : $signed({2'b0, hpos_d}) - 9'sd97;
+
+	// V-Shift: signed 5-bit, -16..+15 lines.
+	reg signed [5:0] vshift_off;
+	always @(posedge CLK_VIDEO) if (ce_pix) vshift_off <= $signed(status[32:28]);
+
+	wire [7:0] crt_r, crt_g, crt_b;
+	wire       crt_hs, crt_vs, crt_hb, crt_vb;
+
+	crt_adjust #(
+		.VTOTAL   (262),
+		.HTOTAL   (456),
+		.HPOS_MODE(1)
+	) u_crt_adjust (
+		.clk      (CLK_VIDEO),
+		.pxl_cen  (ce_pix),
+		.pxl2_cen (ce_pix),
+		.active   (crt_adj_on),
+		.hsize    (5'sd0),
+		.hoffset  (hpos_off),
+		.voffset  (vshift_off),
+		.r_in(R), 
+		.g_in(G), 
+		.b_in(B),
+		.hs_in(~HS_N), 
+		.vs_in(~VS_N), 
+		.hb_in(~HBL_N), 
+		.vb_in(~VBL_N),
+		
+		.r_out(crt_r), 
+		.g_out(crt_g), 
+		.b_out(crt_b),
+		.hs_out(crt_hs), 
+		.vs_out(crt_vs), 
+		.hb_out(crt_hb), 
+		.vb_out(crt_vb),
+		.hs_ref_out()
+	);
+
 	video_mixer #(.LINE_LENGTH(640), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	(
 		.*,
@@ -1189,16 +1048,18 @@ module emu
 		.freeze_sync(),
 	
 		.VGA_DE(vga_de),
-		.R(R),
-		.G(G),
-		.B(B),
+		.R(crt_r),
+		.G(crt_g),
+		.B(crt_b),
 	
 		// Positive pulses.
-		.HSync(~HS_N), 
-		.VSync(~VS_N),  
-		.HBlank(~HBL_N),
-		.VBlank(~VBL_N) 
+		.HSync(crt_hs), 
+		.VSync(crt_vs),  
+		.HBlank(crt_hb),
+		.VBlank(crt_vb) 
 	);
+	
+	assign AUDIO_MIX = status[15:14] == 2'b01 ? 2'b11 : 2'b00;
 
 	//debug
 	reg  [ 5: 0] SCRN_EN = 6'b111111;
